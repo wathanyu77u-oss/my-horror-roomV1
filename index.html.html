@@ -1,0 +1,425 @@
+<!DOCTYPE html>
+<html lang="th">
+<head>
+    <meta charset="UTF-8">
+    <title>ห้องเล่าหลอน</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <link href="https://fonts.googleapis.com/css2?family=Noto+Sans+Thai:wght@300;400;700&family=Cinzel:wght@700&display=swap" rel="stylesheet">
+    <style>
+        body { background: #020202; color: #b9b9b9; font-family: 'Noto Sans Thai', sans-serif; line-height: 2.3; }
+        .glass-card { background: rgba(10, 10, 10, 0.98); border: 1px solid #1a1a1a; border-radius: 12px; }
+        .story-puead { text-align: justify; font-size: 1.15rem; color: #dcdcdc; word-break: break-all; }
+        .btn-horror { background: linear-gradient(135deg, #450a0a, #991b1b); transition: 0.3s; cursor: pointer; color: white; font-weight: bold; }
+        .btn-horror:disabled { opacity: 0.5; cursor: not-allowed; }
+        .image-prompt-box { background: #080808; border: 1px dashed #444; padding: 15px; border-radius: 8px; margin-top: 25px; position: relative; }
+        .loader { border: 4px solid #111; border-top: 4px solid #991b1b; border-radius: 50%; width: 40px; height: 40px; animation: spin 1s linear infinite; margin: 0 auto; }
+        @keyframes spin { 0% { transform: rotate(0deg); } 100% { transform: rotate(360deg); } }
+        .horror-font { font-family: 'Cinzel', serif; }
+        .error-box { background: #1a0505; border: 1px solid #450a0a; color: #991b1b; padding: 10px; border-radius: 6px; margin-top: 10px; font-size: 0.9rem; }
+    </style>
+</head>
+<body class="p-4 md:p-10">
+    <div class="max-w-4xl mx-auto">
+        <h1 class="horror-font text-5xl text-red-900 text-center mb-10">ห้องเล่าหลอน</h1>
+
+        <div id="setup" class="glass-card p-8 space-y-6">
+            <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+                <input type="text" id="title" placeholder="ชื่อเรื่อง" class="bg-black border border-gray-800 p-3 rounded w-full outline-none text-white">
+                <input type="text" id="char" placeholder="ชื่อตัวละคร (เบล/มอส)" class="bg-black border border-gray-800 p-3 rounded w-full outline-none text-white">
+            </div>
+            
+            <div class="grid grid-cols-1 md:grid-cols-2 gap-8">
+                <div>
+                    <label class="text-xs text-gray-500 font-bold">ระดับความหลอน (6-9): <span id="lv-num" class="text-red-700">7</span></label>
+                    <input type="range" id="horror-slider" min="6" max="9" value="7" class="w-full mt-2 accent-red-900">
+                </div>
+                <div>
+                    <label class="text-xs text-gray-500 font-bold">เลือกจำนวนท่อน: <span id="chapter-num" class="text-red-700">2</span></label>
+                    <input type="range" id="chapter-slider" min="1" max="10" value="2" class="w-full mt-2 accent-red-900">
+                </div>
+            </div>
+
+            <textarea id="keywords" placeholder="ปมสยอง..." class="bg-black border border-gray-800 p-3 rounded w-full outline-none text-white" rows="3"></textarea>
+            <button onclick="startRitual()" class="btn-horror w-full p-4 rounded uppercase tracking-widest hover:opacity-90">เริ่มเขียนบท</button>
+        </div>
+
+        <div id="story-display" class="glass-card p-10 hidden mt-10">
+            <h2 id="st-title" class="horror-font text-3xl text-red-700 mb-8 border-b border-red-900 pb-4"></h2>
+            <div id="chapters-container"></div>
+            
+            <div id="loading-area" class="hidden text-center py-10">
+                <div class="loader mb-4"></div>
+                <p id="loading-text" class="italic text-red-900 animate-pulse font-bold"></p>
+            </div>
+
+            <div id="error-area" class="hidden error-box"></div>
+
+            <div id="actions" class="mt-10 flex flex-col gap-4">
+                <button id="next-btn" onclick="fetchNextChapter()" class="btn-horror hidden w-full p-4 rounded hover:opacity-90">เตรียมบทท่อนต่อไป →</button>
+                <button onclick="location.reload()" class="w-full text-gray-700 text-[10px] uppercase py-4 hover:text-gray-500">เริ่มเรื่องใหม่</button>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        // 🔴 ใส่ API Key ตรงนี้
+        const API_KEY = "AIzaSyC3MRGR8DB7lra7R1ZKngSnEltPhMIeQFI"; 
+        
+        let currentChapter = 0;
+        let totalChapters = 1;
+        let storyHistory = [];
+        let isLoading = false;
+
+        function getHorrorDescription(level) {
+            const descriptions = {
+                6: "หลอนระดับปานกลาง: เน้นบรรยากาศลึกลับ น่าสงสัย จิตตก เงาคลุมเครือ เงียบจนน่าอึดอัด ไม่มีผีปรากฏตัวชัดเจน ไม่มีเลือด ไม่มีความตาย",
+                7: "หลอนระดับสูง: มีเสียงแปลก เงาพราย กลิ่นอับชื้น รู้สึกถูกจ้องมอง ผีเห็นเป็นภาพกระพริบ ไม่โชว์ใบหน้าชัดเจน ไม่มีเลือด ไม่มีอันตรายทางกาย",
+                8: "หลอนระดับรุนแรง (YouTube-Friendly): ผีปรากฏตัว แต่ไม่โชว์ความสยดสยองเกินไป เน้นความกลัวในจิตใจ วิ่งหนี แต่ไม่มีเลือด ไม่มีอวัยวะ ไม่มีความตายโหด ไม่มีการฆ่าตัวตาย",
+                9: "หลอนระดับสุดขีด (YouTube-Safe): ความกลัวสูงสุดจากจินตนาการ ความบ้า ความหลอนจากการมองเห็นภาพหลอน ไม่มีฉากฆ่าตัวตาย ไม่มีเลือด ไม่มีความรุนแรงทางเพศ ไม่ทำร้ายเด็ก ไม่หมิ่นศาสนา เน้นจิตตก หลอนจากสภาพแวดล้อม ความกลัวที่ไม่เห็นชัดแต่รู้สึกได้"
+            };
+            return descriptions[level] || descriptions[7];
+        }
+
+        document.getElementById('horror-slider').oninput = function() { 
+            document.getElementById('lv-num').innerText = this.value; 
+        };
+        document.getElementById('chapter-slider').oninput = function() { 
+            document.getElementById('chapter-num').innerText = this.value; 
+        };
+
+        async function startRitual() {
+            // เช็ค API Key
+            if (API_KEY === "ใส่_API_Key_ของคุณตรงนี้" || !API_KEY) {
+                alert("กรุณาใส่ API Key ในโค้ดก่อน (บรรทัดที่ 83)");
+                return;
+            }
+
+            totalChapters = parseInt(document.getElementById('chapter-slider').value);
+            document.getElementById('setup').classList.add('hidden');
+            document.getElementById('story-display').classList.remove('hidden');
+            document.getElementById('st-title').innerText = document.getElementById('title').value || "บทเล่าเรื่องผี";
+            await fetchNextChapter();
+        }
+
+        function getLastSentence(text) {
+            const parts = text.split('...').filter(p => p.trim().length > 0);
+            return parts.slice(-2).join('...') + '...';
+        }
+
+        function cleanStoryText(text) {
+            if (currentChapter === 1) return text;
+            
+            const introPatterns = [
+                /ถ้าคุณเป็นคนหนึ่งที่ชอบบรรยากาศเพื่อนเล่าเรื่องผีให้ฟังแต่ก่อนเข้าห้องฟังเรื่องหลอน.*?สวัสดีครับเพื่อนๆ/gs,
+                /สวัสดีครับเพื่อนๆ\s+ผมชื่อ[^.]+?\.\.\./s,
+                /เรื่องที่ผมจะเล่าต่อไปนี้.*?เปลี่ยนชีวิตผมไปตลอดกาล\.\.\./s,
+                /ผมได้รับเรื่องนี้มาจากเจ้าของประสบการณ์โดยตรง.*?สวัสดีครับ/gs
+            ];
+            
+            let cleaned = text;
+            for (const pattern of introPatterns) {
+                cleaned = cleaned.replace(pattern, '');
+            }
+            return cleaned.replace(/^\s+/, '').trim();
+        }
+
+        function ensureOutro(text) {
+            const outroSequence = [
+                "เรื่องราวทั้งหมดก็จบลง",
+                "ขอบคุณที่กดติดตาม",
+                "เพราะความหลอน",
+                "ห้องเล่าหลอน",
+                "สวัสดีครับ"
+            ];
+            
+            let lastIndex = -1;
+            const missing = [];
+            
+            for (const part of outroSequence) {
+                const idx = text.indexOf(part);
+                if (idx === -1) {
+                    missing.push(part);
+                } else if (idx < lastIndex) {
+                    missing.push(`${part} (ลำดับผิด)`);
+                } else {
+                    lastIndex = idx;
+                }
+            }
+            
+            if (missing.length > 0) {
+                let cleaned = text;
+                outroSequence.forEach(part => {
+                    cleaned = cleaned.replace(new RegExp(part.replace(/[.*+?^${}()|[\]\\]/g, '\\$&') + '.*?', 'g'), '');
+                });
+                cleaned = cleaned.replace(/สวัสดีครับ\s*$/, '').trim();
+                
+                return cleaned + ` เรื่องราวทั้งหมดก็จบลงเพียงเท่านี้ครับ... ... ขอบคุณที่กดติดตาม... และกดกระดิ่งแจ้งเตือน... ... เพราะความหลอน... ... ไม่ได้เคาะประตูก่อนเสมอไป... ... แล้วพบกันใหม่... ที่... ... ห้องเล่าหลอน... ... สวัสดีครับ`;
+            }
+            
+            return text;
+        }
+
+        function validateImagePrompt(img, title, keywords) {
+            if (!img || typeof img !== 'string') return null;
+            
+            const trimmed = img.trim();
+            if (trimmed.length < 50) return null;
+            
+            const genericPatterns = [
+                /^cinematic horror scene.*dark atmosphere.*photorealistic.*8k$/i,
+                /^horror scene.*dark.*photorealistic$/i
+            ];
+            
+            for (const pattern of genericPatterns) {
+                if (pattern.test(trimmed)) return null;
+            }
+            
+            const hasSpecificDetail = /(character|scene|environment|lighting|mood|atmosphere|detailed|specific)/i.test(trimmed);
+            if (!hasSpecificDetail) return null;
+            
+            return trimmed;
+        }
+
+        function generateFallbackImagePrompt(title, keywords, chapter, isLastChapter) {
+            const baseContext = `${title}, ${keywords}`;
+            
+            if (isLastChapter) {
+                return `Cinematic horror finale of ${baseContext}, climactic scene, intense atmosphere, dramatic lighting, detailed environment, photorealistic, 8k, highly detailed, emotional impact`;
+            } else if (chapter === 1) {
+                return `Cinematic horror opening of ${baseContext}, mysterious atmosphere, establishing shot, detailed environment, photorealistic, 8k, highly detailed, moody lighting`;
+            } else {
+                return `Cinematic horror scene ${chapter} of ${baseContext}, escalating tension, detailed environment, atmospheric lighting, photorealistic, 8k, highly detailed`;
+            }
+        }
+
+        async function fetchNextChapter() {
+            if (isLoading) return;
+            
+            currentChapter++;
+            isLoading = true;
+            setLoading(true, `กำลังเขียนบทท่อนที่ ${currentChapter}/${totalChapters}...`);
+            document.getElementById('next-btn').classList.add('hidden');
+            hideError();
+
+            const charName = document.getElementById('char').value || "เบล";
+            const lv = document.getElementById('horror-slider').value;
+            const horrorDesc = getHorrorDescription(parseInt(lv));
+            const title = document.getElementById('title').value || "เรื่องหลอน";
+            const keywords = document.getElementById('keywords').value || "บ้านร้าง";
+
+            const isLastChapter = currentChapter === totalChapters;
+            
+            const previousEnding = storyHistory.length > 0 
+                ? getLastSentence(storyHistory[storyHistory.length - 1])
+                : null;
+
+            let storyOutline = "";
+            if (currentChapter === 1) {
+                storyOutline = `[Outline เรื่อง ${totalChapters} ท่อน]\n` +
+                    Array.from({length: totalChapters}, (_, i) => {
+                        const num = i + 1;
+                        const isLast = num === totalChapters;
+                        const isFirst = num === 1;
+                        if (isFirst) return `ท่อน ${num}: แนะนำตัวละคร + สถานที่ + เหตุการณ์เริ่มต้น + ทิ้งปม`;
+                        if (isLast) return `ท่อน ${num}: Climax + ตอนจบ + Outro`;
+                        return `ท่อน ${num}: เหตุการณ์เข้มข้นขึ้น + ทิ้งปม`;
+                    }).join('\n') + 
+                    `\n\nคุณกำลังเขียนท่อน 1 ตาม Outline นี้`;
+            } else {
+                storyOutline = `[Outline เรื่อง ${totalChapters} ท่อน]\n` +
+                    Array.from({length: totalChapters}, (_, i) => {
+                        const num = i + 1;
+                        const isLast = num === totalChapters;
+                        const isCurrent = num === currentChapter;
+                        const status = num < currentChapter ? '✅' : (isCurrent ? '🔄 กำลังเขียน' : '⏳');
+                        if (num === 1) return `${status} ท่อน ${num}: แนะนำตัวละคร + สถานที่ + เหตุการณ์เริ่มต้น`;
+                        if (isLast) return `${status} ท่อน ${num}: Climax + ตอนจบ + Outro`;
+                        return `${status} ท่อน ${num}: เหตุการณ์เข้มข้นขึ้น`;
+                    }).join('\n') +
+                    `\n\n[สำคัญ] ท่อนก่อนจบที่: "${previousEnding}"\nคุณต้องเล่าต่อจากตรงนี้ทันที ห้ามเริ่มใหม่ ห้ามมี Intro ซ้ำ`;
+            }
+
+            let positionPrompt = "";
+            
+            if (currentChapter === 1) {
+                positionPrompt = `[ท่อนแรก/${totalChapters}]
+- เริ่มด้วย Hook 1-2 ประโยค
+- ต่อด้วย Intro: "ถ้าคุณเป็นคนหนึ่งที่ชอบบรรยากาศเพื่อนเล่าเรื่องผีให้ฟังแต่ก่อนเข้าห้องฟังเรื่องหลอน... อย่าลืมกดติดตามพวกเราไว้ด้วยนะครับ ถือว่าย้ายเข้ามานั่งฟังใน 'ห้องเล่าหลอน' ด้วยกัน จะได้ไม่พลาดเรื่องราวใหม่ๆ... ... ผมได้รับเรื่องนี้มาจากเจ้าของประสบการณ์โดยตรง--และจะขอเล่าแทนตัวเจ้าของเรื่อง... สวัสดีครับเพื่อนๆ ผมชื่อ${charName}ครับ... เรื่องที่ผมจะเล่าต่อไปนี้ มันเป็นเหตุการณ์ที่เปลี่ยนชีวิตผมไปตลอดกาล..."
+- แล้วต่อด้วยเนื้อเรื่อง ห้ามจบ ต้องทิ้งปมใหญ่ไว้`;
+
+            } else if (isLastChapter) {
+                positionPrompt = `[ท่อนสุดท้าย ${currentChapter}/${totalChapters}]
+🔴 ห้ามผิดเด็ดขาด:
+- ห้ามมี Intro หรือ Hook
+- ห้ามเริ่มต้นใหม่
+- ต้องต่อจากประโยคสุดท้ายของท่อนก่อนทันที
+
+✅ ต้องทำ:
+- Climax (จุดสูงสุดของเรื่อง)
+- ตอนจบที่ชัดเจน
+- Outro ครบทุกบรรทัด`;
+
+            } else {
+                positionPrompt = `[ท่อนกลาง ${currentChapter}/${totalChapters}]
+- ห้ามมี Intro
+- ห้ามจบเรื่อง
+- ต้องต่อจากท่อนก่อนโดยตรง
+- เหตุการณ์เข้มขึ้นขึ้น
+- ทิ้งปมไว้ต่อ`;
+            }
+
+            const prompt = `[Role: นักเล่าเรื่องผีมืออาชีพ "ห้องเล่าหลอน"]
+[Task: เขียนบทความยาว 1,700-1,800 คำ + Image Prompt]
+
+${storyOutline}
+
+${positionPrompt}
+
+[CRITICAL RULES]
+1. ห้ามเว้นบรรทัด: เขียนปื้นเดียว
+2. จังหวะ: ... (2วิ), ... ... (3-4วิ), -- (ถอนหายใจ)
+3. สรรพนาม: "ผม" เท่านั้น
+
+[Tone: ${lv}/10] ${horrorDesc}
+
+[Content: ${title}, ${keywords}]
+
+${currentChapter > 1 ? `[ต่อจากนี้]: "${previousEnding}"` : ''}
+
+${isLastChapter ? `[Outro ต้องมีครบ]:
+เรื่องราวทั้งหมดก็จบลงเพียงเท่านี้ครับ... ... ขอบคุณที่กดติดตาม... และกดกระดิ่งแจ้งเตือน... ... เพราะความหลอน... ... ไม่ได้เคาะประตูก่อนเสมอไป... ... แล้วพบกันใหม่... ที่... ... ห้องเล่าหลอน... ... สวัสดีครับ` : ''}
+
+[Visual Task]
+PROMPT_SPLIT + Image Prompt ละเอียด (อย่างน้อย 50 คำ อธิบายฉากเฉพาะจากเนื้อเรื่องนี้)`;
+
+            try {
+                const result = await fetchWithRetry(prompt, title, keywords, isLastChapter);
+                
+                if (result) {
+                    storyHistory.push(result.story);
+                    renderChapter(currentChapter, result.story, result.image);
+                    
+                    if (isLastChapter) {
+                        document.getElementById('next-btn').classList.add('hidden');
+                    } else {
+                        document.getElementById('next-btn').classList.remove('hidden');
+                    }
+                }
+                
+            } catch (e) { 
+                showError("เกิดข้อผิดพลาด: " + e.message);
+                console.error(e);
+            } finally {
+                isLoading = false;
+                setLoading(false);
+            }
+        }
+
+        async function fetchWithRetry(prompt, title, keywords, isLastChapter, maxRetries = 2) {
+            for (let attempt = 1; attempt <= maxRetries; attempt++) {
+                try {
+                    const response = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=${API_KEY}`, {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({
+                            contents: [{ parts: [{ text: prompt }] }],
+                            generationConfig: { 
+                                temperature: 0.4, 
+                                maxOutputTokens: 8192 
+                            }
+                        })
+                    });
+
+                    if (!response.ok) {
+                        throw new Error(`API Error: ${response.status}`);
+                    }
+
+                    const data = await response.json();
+                    
+                    if (!data.candidates || !data.candidates[0] || !data.candidates[0].content) {
+                        throw new Error("Invalid response structure");
+                    }
+                    
+                    let text = data.candidates[0].content.parts[0].text;
+                    
+                    text = cleanStoryText(text);
+                    
+                    if (isLastChapter) {
+                        text = ensureOutro(text);
+                    }
+                    
+                    let story, img;
+                    if (text.includes("PROMPT_SPLIT")) {
+                        [story, img] = text.split("PROMPT_SPLIT");
+                    } else {
+                        story = text;
+                        img = "";
+                    }
+                    
+                    story = story.trim();
+                    img = img ? img.trim() : "";
+                    
+                    let validatedImg = validateImagePrompt(img, title, keywords);
+                    
+                    if (!validatedImg) {
+                        validatedImg = generateFallbackImagePrompt(title, keywords, currentChapter, isLastChapter);
+                    }
+                    
+                    if (story.length > 500) {
+                        return { story, image: validatedImg };
+                    } else {
+                        throw new Error("Story too short");
+                    }
+                    
+                } catch (e) {
+                    console.error(`Attempt ${attempt} failed:`, e);
+                    if (attempt === maxRetries) {
+                        throw e;
+                    }
+                    await new Promise(resolve => setTimeout(resolve, 1000));
+                }
+            }
+            
+            return null;
+        }
+
+        function renderChapter(num, story, img) {
+            const container = document.getElementById('chapters-container');
+            const section = document.createElement('div');
+            section.className = "mb-16 pb-10 border-b border-gray-900";
+            section.id = `chapter-${num}`;
+            
+            const escapedImg = img.replace(/'/g, "\\'").replace(/"/g, '\\"');
+            
+            section.innerHTML = `
+                <div class="text-red-900 font-bold mb-4 italic">บทที่ ${num} / ${totalChapters}</div>
+                <div class="story-puead">${story}</div>
+                <div class="image-prompt-box mt-6">
+                    <button class="bg-zinc-900 text-[10px] px-2 py-1 absolute top-2 right-2 rounded hover:bg-zinc-800" 
+                            onclick="navigator.clipboard.writeText('${escapedImg}');alert('คัดลอก Prompt แล้ว!')">COPY</button>
+                    <div class="text-[10px] text-gray-600 font-bold uppercase mb-1">Image Prompt</div>
+                    <p class="text-xs text-gray-500">${img}</p>
+                </div>
+            `;
+            container.appendChild(section);
+            section.scrollIntoView({ behavior: 'smooth', block: 'start' });
+        }
+
+        function setLoading(is, text) {
+            document.getElementById('loading-area').classList.toggle('hidden', !is);
+            document.getElementById('loading-text').innerText = text || '';
+            document.getElementById('next-btn').disabled = is;
+        }
+
+        function showError(msg) {
+            const errorBox = document.getElementById('error-area');
+            errorBox.innerText = msg;
+            errorBox.classList.remove('hidden');
+        }
+
+        function hideError() {
+            document.getElementById('error-area').classList.add('hidden');
+        }
+    </script>
+</body>
+</html>
